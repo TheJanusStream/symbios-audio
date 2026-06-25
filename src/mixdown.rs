@@ -73,10 +73,10 @@
 
 use std::collections::HashMap;
 
-use crate::wav::MAX_WAV_SAMPLES;
 use crate::bake::bake_inner;
 use crate::patch::AudioPatch;
 use crate::sequence::{Event, PitchMode, SequenceRecipe};
+use crate::wav::MAX_WAV_SAMPLES;
 
 /// Bake a [`SequenceRecipe`] into a mono `Vec<f32>` mixdown buffer.
 ///
