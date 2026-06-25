@@ -25,7 +25,8 @@
 //! - [`mod@bake`] — turns one [`AudioPatch`] into `Vec<f32>`.
 //! - [`sequence`] + [`mixdown`] — the timeline-of-events layer and the
 //!   seamless-loop-aware [`bake_sequence`].
-//! - [`wav`] — pure RIFF/WAVE IEEE-float encoder for baked buffers.
+//! - [`wav`] — pure RIFF/WAVE encoder for baked buffers (32-bit IEEE float and
+//!   half-size 16-bit PCM).
 //! - [`genetics`] — declarative [`impl_genotype!`] macro and shared
 //!   mutation helpers that wire every config struct into
 //!   `symbios-genetics`.
@@ -68,4 +69,6 @@ pub use oscillator::{
 pub use patch::{AudioPatch, Connection, GraphError, GraphNode, NodeGraph, NodeId, topo_sort};
 pub use reverb::Reverb;
 pub use sequence::{Event, Instrument, PitchMode, SequenceRecipe, Track};
-pub use wav::{MAX_WAV_SAMPLES, samples_to_wav_bytes};
+pub use wav::{
+    MAX_WAV_SAMPLES, MAX_WAV_SAMPLES_PCM16, samples_to_wav_bytes, samples_to_wav_bytes_pcm16,
+};

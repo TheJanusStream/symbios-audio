@@ -122,6 +122,68 @@ pub fn samples_to_wav_bytes(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     buf
 }
 
+const FORMAT_PCM: u16 = 1;
+const PCM16_BITS_PER_SAMPLE: u16 = 16;
+/// Bytes per (mono) sample frame for 16-bit PCM: `channels * 16 / 8`.
+const PCM16_BLOCK_ALIGN: u16 = NUM_CHANNELS * PCM16_BITS_PER_SAMPLE / 8;
+/// Header bytes preceding the data for a canonical PCM WAV (no `fact` chunk,
+/// which the spec only requires for non-PCM formats): `"WAVE"` + fmt
+/// header+body + data header = 4 + 8 + 16 + 8.
+const PCM16_HEADER_BYTES: u32 = 4 + 8 + 16 + 8;
+
+/// Largest number of mono 16-bit samples that fit in one PCM WAV blob, bounded
+/// by the 32-bit RIFF size fields. See [`MAX_WAV_SAMPLES`] for the float path.
+pub const MAX_WAV_SAMPLES_PCM16: usize =
+    ((u32::MAX - PCM16_HEADER_BYTES) / (PCM16_BLOCK_ALIGN as u32)) as usize;
+
+/// Encode `samples` as a complete RIFF/WAVE **16-bit PCM** mono blob at
+/// `sample_rate` Hz — half the byte size of the 32-bit float
+/// [`samples_to_wav_bytes`] at the cost of quantising to 16 bits, which is
+/// inaudible for the procedural pads / hums baked here and the right default
+/// when resident memory matters (notably wasm, where the heap never shrinks).
+///
+/// `f32` samples outside `[-1.0, 1.0]` are clamped before quantising. Panics
+/// above [`MAX_WAV_SAMPLES_PCM16`] rather than emit a silently-wrapped header
+/// (mirrors [`samples_to_wav_bytes`]); split longer bakes into segments.
+pub fn samples_to_wav_bytes_pcm16(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    assert!(
+        samples.len() <= MAX_WAV_SAMPLES_PCM16,
+        "samples_to_wav_bytes_pcm16: {} samples exceed the WAV 32-bit size \
+         limit; split the bake into segments",
+        samples.len()
+    );
+    let data_size: u32 = samples.len() as u32 * u32::from(PCM16_BLOCK_ALIGN);
+    let byte_rate: u32 = sample_rate.saturating_mul(u32::from(PCM16_BLOCK_ALIGN));
+    let riff_chunk_size: u32 = PCM16_HEADER_BYTES + data_size;
+
+    let mut buf = Vec::with_capacity(8 + riff_chunk_size as usize);
+
+    // --- RIFF / WAVE container -------------------------------------------
+    buf.extend_from_slice(b"RIFF");
+    buf.extend_from_slice(&riff_chunk_size.to_le_bytes());
+    buf.extend_from_slice(b"WAVE");
+
+    // --- fmt chunk (canonical 16-byte PCM body) --------------------------
+    buf.extend_from_slice(b"fmt ");
+    buf.extend_from_slice(&16u32.to_le_bytes());
+    buf.extend_from_slice(&FORMAT_PCM.to_le_bytes());
+    buf.extend_from_slice(&NUM_CHANNELS.to_le_bytes());
+    buf.extend_from_slice(&sample_rate.to_le_bytes());
+    buf.extend_from_slice(&byte_rate.to_le_bytes());
+    buf.extend_from_slice(&PCM16_BLOCK_ALIGN.to_le_bytes());
+    buf.extend_from_slice(&PCM16_BITS_PER_SAMPLE.to_le_bytes());
+
+    // --- data chunk ------------------------------------------------------
+    buf.extend_from_slice(b"data");
+    buf.extend_from_slice(&data_size.to_le_bytes());
+    for &s in samples {
+        let q = (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)).round() as i16;
+        buf.extend_from_slice(&q.to_le_bytes());
+    }
+
+    buf
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +253,83 @@ mod tests {
         let bytes = samples_to_wav_bytes(&[0.5_f32], 48_000);
         let (format_code, _, _) = parse_wav(&bytes);
         assert_eq!(format_code, 3, "expected IEEE float (3), got {format_code}");
+    }
+
+    /// Walk the chunk list of a 16-bit PCM blob, returning
+    /// `(format_code, bits_per_sample, sample_rate, i16 samples)`.
+    fn parse_wav_pcm16(bytes: &[u8]) -> (u16, u16, u32, Vec<i16>) {
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        let mut pos = 12usize;
+        let (mut format_code, mut bits, mut sample_rate) = (0u16, 0u16, 0u32);
+        let (mut data_start, mut data_size) = (None, 0u32);
+        while pos + 8 <= bytes.len() {
+            let id = &bytes[pos..pos + 4];
+            let size = u32::from_le_bytes([
+                bytes[pos + 4],
+                bytes[pos + 5],
+                bytes[pos + 6],
+                bytes[pos + 7],
+            ]) as usize;
+            let body = pos + 8;
+            if id == b"fmt " {
+                format_code = u16::from_le_bytes([bytes[body], bytes[body + 1]]);
+                sample_rate = u32::from_le_bytes([
+                    bytes[body + 4],
+                    bytes[body + 5],
+                    bytes[body + 6],
+                    bytes[body + 7],
+                ]);
+                bits = u16::from_le_bytes([bytes[body + 14], bytes[body + 15]]);
+            } else if id == b"data" {
+                data_start = Some(body);
+                data_size = size as u32;
+            }
+            pos = body + size;
+        }
+        let data_start = data_start.expect("data chunk");
+        let mut samples = Vec::new();
+        let mut i = data_start;
+        let end = data_start + data_size as usize;
+        while i + 2 <= end {
+            samples.push(i16::from_le_bytes([bytes[i], bytes[i + 1]]));
+            i += 2;
+        }
+        (format_code, bits, sample_rate, samples)
+    }
+
+    #[test]
+    fn pcm16_header_and_quantisation_round_trip() {
+        let bytes = samples_to_wav_bytes_pcm16(&[0.0, 1.0, -1.0, 0.5], 22_050);
+        let (format_code, bits, sr, samples) = parse_wav_pcm16(&bytes);
+        assert_eq!(format_code, 1, "expected PCM (1), got {format_code}");
+        assert_eq!(bits, 16);
+        assert_eq!(sr, 22_050);
+        // Canonical 44-byte PCM header + 4 samples * 2 bytes.
+        assert_eq!(bytes.len(), 44 + 8);
+        assert_eq!(samples[0], 0);
+        assert_eq!(samples[1], i16::MAX);
+        assert_eq!(samples[2], -i16::MAX);
+        assert_eq!(samples[3], (0.5 * f32::from(i16::MAX)).round() as i16);
+    }
+
+    #[test]
+    fn pcm16_clamps_out_of_range_samples() {
+        let bytes = samples_to_wav_bytes_pcm16(&[2.0, -2.0], 44_100);
+        let (_, _, _, samples) = parse_wav_pcm16(&bytes);
+        assert_eq!(samples, vec![i16::MAX, -i16::MAX]);
+    }
+
+    #[test]
+    fn pcm16_is_half_the_bytes_of_float() {
+        let s = [0.25_f32; 100];
+        let f32_data = samples_to_wav_bytes(&s, 44_100).len();
+        let pcm16_data = samples_to_wav_bytes_pcm16(&s, 44_100).len();
+        // Data payload halves (200 vs 400 bytes). Headers differ: PCM is a
+        // canonical 44-byte header; float carries an extra 12-byte `fact`
+        // chunk → 56 bytes.
+        assert_eq!(pcm16_data, 44 + 200);
+        assert_eq!(f32_data, 56 + 400);
     }
 
     #[test]
