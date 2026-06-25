@@ -1,0 +1,23 @@
+[package]
+name = "symbios-audio"
+version = "0.1.0"
+edition = "2024"
+authors = ["Janus"]
+description = "An algorithmic audio generator."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/TheJanusStream/symbios-audio"
+keywords = ["audio", "procedural", "generative", "simulation"]
+categories = ["simulation", "game-development", "mathematics"]
+
+[dependencies]
+log = "0.4"
+rand = "0.9"
+rand_chacha = "0.9"
+rayon = "1.11"
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+symbios-genetics = "0.2"
+
+[dev-dependencies]
+serde_json = "1.0"
