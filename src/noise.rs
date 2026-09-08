@@ -41,6 +41,7 @@ use crate::node::{BakeContext, Node};
 
 /// Uniform white noise, drawn fresh from the seeded RNG every sample.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WhiteNoise {
     /// Output scale.  The raw RNG draw is in [−1, 1]; the sample is
     /// `draw * amplitude`.
@@ -64,6 +65,7 @@ impl Node for WhiteNoise {
 
 /// Pink noise — Paul Kellet's 3-band filter, ~−3 dB/octave.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PinkNoise {
     pub amplitude: f32,
 }
@@ -114,6 +116,7 @@ impl Node for PinkNoise {
 
 /// Brown noise — leaky integrator of white, ~−6 dB/octave.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BrownNoise {
     pub amplitude: f32,
 }

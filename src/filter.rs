@@ -134,6 +134,7 @@ fn process(input: f32, state: &mut BiquadState, c: &BiquadCoefs) -> f32 {
 /// Second-order biquad lowpass.  Passes frequencies below `cutoff_hz` and
 /// attenuates everything above at ~12 dB/octave.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BiquadLowpass {
     pub cutoff_hz: f32,
     pub q: f32,
@@ -171,6 +172,7 @@ impl Node for BiquadLowpass {
 /// Second-order biquad highpass.  Passes frequencies above `cutoff_hz`
 /// and attenuates everything below at ~12 dB/octave.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BiquadHighpass {
     pub cutoff_hz: f32,
     pub q: f32,
@@ -209,6 +211,7 @@ impl Node for BiquadHighpass {
 /// gain variant (cookbook), so peak amplitude at the centre is roughly 1.0
 /// regardless of `Q` — high-Q just narrows the band.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BiquadBandpass {
     pub center_hz: f32,
     pub q: f32,

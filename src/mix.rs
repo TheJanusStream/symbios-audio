@@ -35,6 +35,7 @@ fn default_gain() -> f32 {
 
 /// Additive mixer — sums all wired input ports, scaled by `gain`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Mix {
     /// Master multiplier applied to the summed inputs.
     #[serde(default = "default_gain")]
@@ -57,6 +58,7 @@ impl Node for Mix {
 
 /// Voltage-controlled amplifier — `in * (gain + input("gain"))`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Gain {
     /// Base multiplier.  Wired modulation on the `"gain"` input is added to
     /// this before the multiply, so an envelope on `"gain"` with `gain =

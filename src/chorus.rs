@@ -52,6 +52,7 @@ const MAX_FEEDBACK: f32 = 0.95;
 
 /// Internally-modulated chorus effect.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Chorus {
     /// LFO rate in Hz — how fast the delay is swept.
     pub rate_hz: f32,

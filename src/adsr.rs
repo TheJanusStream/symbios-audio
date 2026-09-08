@@ -60,6 +60,7 @@ pub enum AdsrCurve {
 ///   division-by-zero).
 /// - `sustain_level`: dimensionless `[0, 1]`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AdsrEnvelope {
     pub attack_s: f32,
     pub decay_s: f32,

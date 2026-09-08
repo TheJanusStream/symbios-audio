@@ -53,6 +53,7 @@ pub enum LfoShape {
 
 /// Low-frequency oscillator config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Lfo {
     pub rate_hz: f32,
     pub shape: LfoShape,

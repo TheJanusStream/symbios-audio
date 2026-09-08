@@ -155,6 +155,30 @@ pub(crate) fn bake_inner(
         return Ok(Vec::new());
     }
 
+    // A graph carrying a node this build does not recognise — a `kind` tag
+    // written by a newer version of this crate, decoded to
+    // [`NodeKind::Unknown`] — bakes as though that node were silent.
+    //
+    // Deliberately a warning and not a [`GraphError`]: [`bake`] is
+    // `try_bake(..).expect(..)`, so promoting this to an error would panic
+    // every caller that bakes an untrusted patch on a worker thread, and a
+    // panicked worker is a worse outcome than a quiet node. `GraphError`
+    // stays what it has always been — a *structural* fault (dangling
+    // reference, cycle, duplicate id, missing output) the author can fix.
+    // Warning once per bake is what makes the silence attributable.
+    let unknown = patch
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, NodeKind::Unknown))
+        .count();
+    if unknown > 0 {
+        log::warn!(
+            "audio patch holds {unknown} node(s) whose kind this build of \
+             symbios-audio does not know — they bake as silence"
+        );
+    }
+
     // Deterministic evaluation order — the one thing the bake's output
     // identity actually hinges on (alongside RNG draw order).
     let order = topo_sort(&patch.graph)?;

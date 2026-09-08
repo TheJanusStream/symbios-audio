@@ -113,6 +113,7 @@ impl Allpass {
 
 /// Mono Freeverb reverberator config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Reverb {
     /// Room size in `[0, 1]` — maps to comb feedback (longer tail when larger).
     pub room_size: f32,

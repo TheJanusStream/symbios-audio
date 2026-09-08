@@ -27,6 +27,8 @@
 //!   seamless-loop-aware [`bake_sequence`].
 //! - [`wav`] — pure RIFF/WAVE encoder for baked buffers (32-bit IEEE float and
 //!   half-size 16-bit PCM).
+//! - [`envelope`] — [`Envelope`] and [`ClampToEnvelope`], the
+//!   record-boundary clamp for patches that arrived from elsewhere.
 //! - [`genetics`] — declarative [`impl_genotype!`] macro and shared
 //!   mutation helpers that wire every config struct into
 //!   `symbios-genetics`.
@@ -36,9 +38,16 @@
 //! into the evolutionary search algorithms in the `symbios-genetics`
 //! crate.
 
+// Compile the README's code blocks as doctests, so the examples shown on
+// GitHub and crates.io cannot drift out of sync with the API.
+#[doc = include_str!("../README.md")]
+#[cfg(doctest)]
+pub struct ReadmeDoctests;
+
 pub mod adsr;
 pub mod bake;
 pub mod chorus;
+pub mod envelope;
 pub mod filter;
 pub mod gate;
 pub mod genetics;
@@ -56,6 +65,7 @@ pub mod wav;
 pub use adsr::{AdsrCurve, AdsrEnvelope};
 pub use bake::{bake, try_bake};
 pub use chorus::Chorus;
+pub use envelope::{ClampToEnvelope, Envelope};
 pub use filter::{BiquadBandpass, BiquadHighpass, BiquadLowpass, BiquadState};
 pub use gate::Gate;
 pub use lfo::{Lfo, LfoShape};

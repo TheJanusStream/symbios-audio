@@ -47,6 +47,7 @@ use crate::patch::AudioPatch;
 /// Top-level recipe — the JSON document a sequencer authors and
 /// [`crate::mixdown::bake_sequence`] consumes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SequenceRecipe {
     /// Tempo for beat-relative timestamps (BPM).
     pub bpm: f32,
@@ -97,6 +98,7 @@ impl Default for SequenceRecipe {
 /// One named, sequenced instrument — an `AudioPatch` plus the string
 /// id that events use to reference it.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Instrument {
     /// Stable identifier used by `Event::instrument_id`.  String rather
     /// than an integer index so a recipe survives a reorder of the
@@ -110,6 +112,7 @@ pub struct Instrument {
 /// implicit position in the mix; the mixdown baker sums all tracks
 /// into a single master buffer.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Track {
     pub events: Vec<Event>,
 }
@@ -133,6 +136,7 @@ pub enum PitchMode {
 
 /// One scheduled note / sound / gust on a track.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Event {
     /// Start time in beats from the recipe's `t = 0`.
     pub time_beats: f32,

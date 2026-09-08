@@ -171,6 +171,7 @@ fn poly_blamp(t: f32, dt: f32) -> f32 {
 /// rotation), so two sines at the same frequency with `phase_offset` 0.0
 /// and 0.25 are 90° apart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SineOsc {
     pub freq_hz: f32,
     pub phase_offset: f32,
@@ -217,6 +218,7 @@ impl Node for SineOsc {
 /// wave.  Duty values near 0 or 1 produce a thin pulse — useful as a
 /// click train and as a target for PWM modulation later.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SquareOsc {
     pub freq_hz: f32,
     pub duty: f32,
@@ -270,6 +272,7 @@ impl Node for SquareOsc {
 
 /// Naïve sawtooth.  Polarity flips the ramp direction.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SawtoothOsc {
     pub freq_hz: f32,
     pub polarity: SawPolarity,
@@ -328,6 +331,7 @@ impl Node for SawtoothOsc {
 /// Naïve triangle.  Symmetric — peaks at +1 at the half-period mark and
 /// bottoms out at −1 at the phase boundary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TriangleOsc {
     pub freq_hz: f32,
     #[serde(default = "default_amplitude")]

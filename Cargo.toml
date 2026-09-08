@@ -1,6 +1,6 @@
 [package]
 name = "symbios-audio"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 authors = ["Janus"]
 description = "An algorithmic audio generator."
@@ -16,8 +16,13 @@ rand = "0.9"
 rand_chacha = "0.9"
 rayon = "1.11"
 serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = "1.0"
 symbios-genetics = "0.2"
 
 [dev-dependencies]
 serde_json = "1.0"
+
+[lints.rust]
+# Nothing in this crate is unsafe and nothing here needs to be: it is pure
+# arithmetic over owned buffers. `forbid` rather than `deny` so the rule
+# cannot be switched off locally by an `allow`.
+unsafe_code = "forbid"

@@ -28,6 +28,7 @@ use crate::node::{BakeContext, Node};
 
 /// Emits a `1.0`/`0.0` gate signal driven by the baker's gate window.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Gate {
     /// Flip the polarity — `0.0` while the gate is open, `1.0` after it
     /// closes.  Defaults to `false` (open ⇒ `1.0`).

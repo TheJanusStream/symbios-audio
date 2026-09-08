@@ -47,6 +47,7 @@ pub struct NodeId(pub u32);
 /// patch render at 44.1 kHz for playback and 48 kHz for capture without
 /// editing the JSON.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AudioPatch {
     /// Seed for the deterministic RNG that drives any stochastic node
     /// (noise generators, randomised LFOs, etc.).  Two bakes of the same
@@ -64,6 +65,7 @@ pub struct AudioPatch {
 /// whose final sample value is the patch's output.  Evaluation order is
 /// derived from [`topo_sort`] — call it once before the sample loop.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NodeGraph {
     /// Unordered set of placed nodes.  Evaluation order is derived
     /// from [`topo_sort`], not from this list's order, so callers may
@@ -96,6 +98,7 @@ impl Default for NodeGraph {
 /// empty }` — a silent zero-id node, useful as a placeholder during
 /// graph construction.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GraphNode {
     /// Stable id used by other nodes' [`Connection::Node`] entries and
     /// by [`NodeGraph::output`].  Must be unique within the parent
