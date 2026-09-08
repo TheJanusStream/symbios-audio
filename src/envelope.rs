@@ -227,14 +227,43 @@ impl ClampToEnvelope for NodeKind {
     }
 }
 
+/// Bound on a connection's DC value and on a node connection's `amount`.
+///
+/// Two reasons, and either would do on its own.
+///
+/// It is the only bound in this module with no relation to the others: the
+/// combiner gains are `±64`, the widest thing here is an LFO depth at
+/// `±10_000`, and a DC constant or modulation amount of a *million* is not a
+/// value anybody reaches for — it is four orders past anything a patch does.
+/// It was picked as "away from the float rails", which bounds the arithmetic
+/// but says nothing about the sound.
+///
+/// And it has to survive a mirror. A schema with no floating-point type —
+/// AT Protocol is the one driving this, but it is the general case — carries
+/// these as scaled integers, and at the customary 1/10000 resolution `±1e6`
+/// needs 10<sup>10</sup> ticks, past `i32`, where the cast saturates and the
+/// value silently changes. `±1e5` needs 10<sup>9</sup>, which fits with room
+/// to spare. Every other bound in this module already did.
+const MAX_CONNECTION_MAGNITUDE: f32 = 100_000.0;
+
 impl ClampToEnvelope for Connection {
     fn clamp_to_envelope(&mut self, _limits: &Envelope) {
         match self {
             Self::Constant { value } => {
-                *value = clamp_finite(*value, -1_000_000.0, 1_000_000.0, 0.0);
+                *value = clamp_finite(
+                    *value,
+                    -MAX_CONNECTION_MAGNITUDE,
+                    MAX_CONNECTION_MAGNITUDE,
+                    0.0,
+                );
             }
             Self::Node { amount, .. } => {
-                *amount = clamp_finite(*amount, -1_000_000.0, 1_000_000.0, 1.0);
+                *amount = clamp_finite(
+                    *amount,
+                    -MAX_CONNECTION_MAGNITUDE,
+                    MAX_CONNECTION_MAGNITUDE,
+                    1.0,
+                );
             }
         }
     }
@@ -544,5 +573,62 @@ mod tests {
                 amount: 1.0
             }
         );
+
+        // Finite but absurd lands on the bound, both signs, both forms.
+        let mut big = Connection::Constant { value: 1e9 };
+        big.clamp_to_envelope(&limits);
+        assert_eq!(
+            big,
+            Connection::Constant {
+                value: MAX_CONNECTION_MAGNITUDE
+            }
+        );
+        let mut small = Connection::Node {
+            id: NodeId(1),
+            amount: -1e9,
+        };
+        small.clamp_to_envelope(&limits);
+        assert_eq!(
+            small,
+            Connection::Node {
+                id: NodeId(1),
+                amount: -MAX_CONNECTION_MAGNITUDE
+            }
+        );
+    }
+
+    /// Every bound in this module survives a 1/10000 fixed-point mirror.
+    ///
+    /// A consumer putting these on a schema with no float type carries them
+    /// as scaled integers, and a bound past `i32` at that resolution is a
+    /// bound the consumer cannot store: the cast saturates and the value
+    /// silently changes. `MAX_CONNECTION_MAGNITUDE` was the one that did not
+    /// fit — it needed 10^10 ticks against a ceiling of 2.1 x 10^9.
+    ///
+    /// Stated as a test rather than a comment because the next bound anyone
+    /// adds is the one at risk, and this is cheaper to read than the
+    /// arithmetic.
+    #[test]
+    fn every_bound_survives_a_fixed_point_mirror() {
+        const SCALE: f64 = 10_000.0;
+        const CEILING: f64 = i32::MAX as f64;
+
+        let widest = [
+            ("connection", MAX_CONNECTION_MAGNITUDE),
+            // The other extremes of the table, so a future widening of any
+            // of them trips this too.
+            ("lfo depth", 10_000.0),
+            ("beats", 100_000.0),
+            ("frequency", 22_050.0),
+            ("gain", 64.0),
+        ];
+        for (what, bound) in widest {
+            assert!(
+                f64::from(bound) * SCALE <= CEILING,
+                "the {what} bound of {bound} needs {} ticks at 1/{SCALE:.0} \
+                 resolution, past the {CEILING} a 32-bit mirror can carry",
+                f64::from(bound) * SCALE
+            );
+        }
     }
 }
