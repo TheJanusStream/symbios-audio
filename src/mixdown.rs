@@ -7,8 +7,27 @@
 //! event's `pitch_multiplier`, sums all events into a master buffer at
 //! the right sample offsets, applies a smooth `tanh` soft-clip so peaks
 //! don't punch through `[-1, 1]`, and — when looping is enabled —
-//! pre-mixes the tail crossfade into the loop region so a hard
-//! `Source::loop_..()` is click-free at the seam.
+//! pre-mixes the tail crossfade into the loop region, so the buffer loops
+//! without a click from its last sample back to its loop start.
+//!
+//! # Looping the buffer
+//!
+//! With `loop_start_beats` set, the buffer is a loop whose seam runs from
+//! its **last sample back to the sample at `loop_start_beats`**, the one
+//! [`loop_start_sample`] names: that is the seam the crossfade smooths.
+//! Everything before that sample is a one-shot run-up, which a looping
+//! player skips.
+//!
+//! Under Bevy, that is `PlaybackSettings::start_position` at the loop
+//! start's time with `PlaybackMode::Loop`, which plays from the loop start
+//! to the end and back for ever. `bevy_symbios_audio` 0.5 works that time
+//! out (`sequence_loop_start`) and has a looping voice that starts there and
+//! can be moved while it plays (`LoopedSamples`). A player that loops the
+//! whole buffer from its first sample — rodio's `Source::repeat_infinite`,
+//! or Bevy's `Loop` with no start position — replays the run-up on every
+//! pass and crosses a seam nothing smoothed, from the last sample to sample
+//! 0. That seam is the smoothed one only when the loop start is sample 0: a
+//! `loop_start_beats` of `Some(0.0)`.
 //!
 //! # Gate and release
 //!
@@ -40,7 +59,8 @@
 //!    hard `clamp` and avoids the harmonic spray a true clipping
 //!    introduces.
 //! 5. If `loop_start_beats` is set: crossfade the tail samples down
-//!    over the loop region starting at `loop_start_beats`, then
+//!    over the loop region starting at `loop_start_beats`
+//!    ([`loop_start_sample`]), then
 //!    truncate the buffer to exactly `main_samples` so the returned
 //!    `Vec<f32>` is `duration_beats × beat_secs × sample_rate`
 //!    samples long.  Otherwise the buffer is just the main timeline.
@@ -88,8 +108,11 @@ use crate::wav::MAX_WAV_SAMPLES;
 /// - When `loop_start_beats` is `Some(b)`: exactly
 ///   `duration_beats × (60 / bpm) × sample_rate` samples — the tail
 ///   is pre-mixed back into the loop region starting at beat `b`
-///   and then dropped, so a hard `Source::loop_..()` over the
-///   returned buffer is click-free at the seam.
+///   and then dropped, so the step from the last sample back to beat `b`
+///   ([`loop_start_sample`]) is click-free. Loop it from there: a loop over
+///   the whole buffer, back to sample 0, crosses a seam nothing smoothed
+///   unless `b` is `0.0` (see
+///   [Looping the buffer](crate::mixdown#looping-the-buffer)).
 ///
 /// See the module docs for the algorithm and limitations.
 pub fn bake_sequence(recipe: &SequenceRecipe) -> Vec<f32> {
@@ -232,55 +255,80 @@ pub fn bake_sequence(recipe: &SequenceRecipe) -> Vec<f32> {
         *s = s.tanh();
     }
 
-    // Tail-crossfade for seamless looping.  When loop_start_beats is
-    // set, the bake has been kept running past duration_beats into
-    // the crossfade tail (events whose release extends past the
-    // timeline end land in this region).  We fade the tail down
-    // linearly and overlay it onto the loop region starting at
-    // loop_start_beats, faded up symmetrically.  After the overlay
-    // the tail samples are dropped and the buffer is truncated to
-    // exactly main_samples — playing it on a hard rodio
-    // Source::loop_..() loop is seamless because the tail's
-    // late-event release has been pre-mixed into the loop start.
+    // Tail-crossfade for looping.  When loop_start_beats is set, the
+    // bake has been kept running past duration_beats into the
+    // crossfade tail (events whose release extends past the timeline
+    // end land in this region).  We fade the tail down linearly and
+    // overlay it onto the loop region starting at the loop start,
+    // faded up symmetrically.  After the overlay the tail samples are
+    // dropped and the buffer is truncated to exactly main_samples — so
+    // the step from the last sample back to the loop start is
+    // continuous, because the tail's late-event release has been
+    // pre-mixed into the loop start.  The step back to sample 0 is
+    // that seam only when the loop start is sample 0.
     if let Some(loop_start_beats) = recipe.loop_start_beats {
-        apply_loop_crossfade(
-            &mut master,
-            loop_start_beats,
-            beat_secs,
-            sr,
-            main_samples,
-            tail_samples,
-        );
+        match loop_start_sample(recipe) {
+            Some(loop_start) => {
+                apply_loop_crossfade(&mut master, loop_start, main_samples, tail_samples);
+            }
+            // Said only when there was a tail it could not fold.
+            None if tail_samples > 0 && main_samples > 0 => log::warn!(
+                "mixdown: loop_start_beats ({loop_start_beats}) is past duration_beats; \
+                 skipping crossfade"
+            ),
+            None => {}
+        }
         master.truncate(main_samples);
     }
 
     master
 }
 
-/// Apply the tail-crossfade described in the module docs.  No-op if
-/// any of the inputs make the operation nonsensical (loop_start past
-/// the end, no tail samples, etc.) — bake_sequence is `-> Vec<f32>`
-/// with no error channel, so this stays quiet.
+/// The sample a looping player goes back to after the last sample of the
+/// buffer [`bake_sequence`] makes of `recipe`, or `None` when that buffer has
+/// no loop point.
+///
+/// `Some` exactly when `loop_start_beats` is set and lands on a sample
+/// before the end of the buffer: the loop start's beats, at the recipe's
+/// BPM, times its sample rate, rounded. A loop start at or past the end, or
+/// a recipe with no length, tempo or sample rate, has no loop point. A hard
+/// cut — no `loop_crossfade_beats` — still has one: there is no tail to
+/// fold, and the loop still runs from where it was set. A negative or NaN
+/// loop start rounds to sample 0.
+///
+/// It is the sample `bake_sequence` folds its crossfade tail into, by the
+/// same arithmetic, so a player that goes back to it from the last sample
+/// crosses the seam the crossfade smoothed. Everything before it is the
+/// run-up (see [Looping the buffer](crate::mixdown#looping-the-buffer)).
+/// As a time it is this many samples over the sample rate; how a player
+/// rounds a time back to a sample is that player's own arithmetic.
+///
+/// Ask about the recipe exactly as it is baked: a host that clamps a recipe
+/// to an [`Envelope`](crate::Envelope) before baking it asks about the
+/// clamped copy, or the two answers disagree.
+pub fn loop_start_sample(recipe: &SequenceRecipe) -> Option<usize> {
+    let beats = recipe.loop_start_beats?;
+    let beat_secs = beat_seconds(recipe.bpm);
+    let sr = recipe.sample_rate;
+    let main_samples = duration_to_samples(recipe.duration_beats, beat_secs, sr);
+    let loop_start = (f64::from(beats) * f64::from(beat_secs) * f64::from(sr)).round() as usize;
+    // Nothing past the end to loop into, which covers a buffer with no
+    // length at all. NOT the crossfade's own early returns: a hard cut has
+    // no tail to fold, and still loops from where it was set.
+    (loop_start < main_samples).then_some(loop_start)
+}
+
+/// Fold the crossfade tail into the loop region from `loop_start`, the
+/// sample [`loop_start_sample`] names, as the module docs describe.  No-op
+/// when there is no tail, or no loop region after `loop_start` to fold it
+/// into — bake_sequence is `-> Vec<f32>` with no error channel, so this
+/// stays quiet.
 fn apply_loop_crossfade(
     master: &mut [f32],
-    loop_start_beats: f32,
-    beat_secs: f32,
-    sample_rate: u32,
+    loop_start: usize,
     main_samples: usize,
     tail_samples: usize,
 ) {
-    if tail_samples == 0 || main_samples == 0 {
-        return;
-    }
-    let loop_start = (f64::from(loop_start_beats) * f64::from(beat_secs) * f64::from(sample_rate))
-        .round() as usize;
-    if loop_start >= main_samples {
-        log::warn!(
-            "mixdown: loop_start_beats ({loop_start_beats}) is past duration_beats; \
-             skipping crossfade"
-        );
-        return;
-    }
     // Don't run the crossfade past the truncation point — if the loop
     // region is shorter than the configured tail, clip the window.
     let crossfade = tail_samples
@@ -405,7 +453,13 @@ fn write_into(master: &mut [f32], start: usize, src: &[f32], volume: f32) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
+    use crate::node::NodeKind;
+    use crate::oscillator::SineOsc;
+    use crate::patch::{GraphNode, NodeGraph, NodeId};
+    use crate::sequence::{Instrument, Track};
 
     #[test]
     fn resample_at_unit_pitch_is_identity() {
@@ -538,7 +592,7 @@ mod tests {
             0.0_f32, 0.0, 0.0, 0.0, // tail region: all 1.0
             1.0, 1.0, 1.0, 1.0,
         ];
-        apply_loop_crossfade(&mut master, 0.0, 1.0, 4, 4, 4);
+        apply_loop_crossfade(&mut master, 0, 4, 4);
         // alpha = i/4. main[i] = (1-alpha)*1.0 + alpha*0.0 = 1 - i/4.
         assert!((master[0] - 1.0).abs() < 1e-6);
         assert!((master[1] - 0.75).abs() < 1e-6);
@@ -550,17 +604,17 @@ mod tests {
     fn apply_loop_crossfade_is_noop_when_no_tail() {
         let mut master = vec![0.5_f32; 4];
         let before = master.clone();
-        apply_loop_crossfade(&mut master, 0.0, 1.0, 4, 4, 0);
+        apply_loop_crossfade(&mut master, 0, 4, 0);
         assert_eq!(master, before);
     }
 
     #[test]
     fn apply_loop_crossfade_skips_when_loop_start_past_main() {
-        // loop_start_beats = 5 with main = 4 samples (and 1 sec/beat,
-        // 4 sample rate) → loop_start sample index 5, past main_samples
-        // of 4.  Function must skip without panicking.
+        // loop_start = sample 5, past main_samples of 4: there is no loop
+        // region to fold into.  `loop_start_sample` never names one, and
+        // the function must skip without panicking if handed one anyway.
         let mut master = vec![0.5_f32; 8];
-        apply_loop_crossfade(&mut master, 5.0, 1.0, 4, 4, 4);
+        apply_loop_crossfade(&mut master, 5, 4, 4);
         // No change to the buffer.
         assert!(master.iter().all(|s| (*s - 0.5).abs() < 1e-6));
     }
@@ -568,20 +622,301 @@ mod tests {
     #[test]
     fn apply_loop_crossfade_clips_window_when_loop_too_close_to_end() {
         // 8-sample buffer.  main_samples = 6, tail_samples = 2 (so the
-        // last 2 indices [6, 7] are the tail).  loop_start_beats * sr =
-        // 1.0 * 4 = sample 4, leaving only main_samples - loop_start =
-        // 2 samples for the crossfade.  Even though tail_samples is
-        // configured here as 4 (an over-request), the function clips
-        // the effective window to min(tail, main_left, buffer_left) =
-        // min(4, 2, 2) = 2.
+        // last 2 indices [6, 7] are the tail).  loop_start = sample 4,
+        // leaving only main_samples - loop_start = 2 samples for the
+        // crossfade.  Even though tail_samples is configured here as 4
+        // (an over-request), the function clips the effective window to
+        // min(tail, main_left, buffer_left) = min(4, 2, 2) = 2.
         let mut master = vec![0.0_f32; 8];
         master[6] = 0.8;
         master[7] = 0.6;
-        apply_loop_crossfade(&mut master, 1.0, 1.0, 4, 6, 4);
+        apply_loop_crossfade(&mut master, 4, 6, 4);
         // crossfade=2 → alpha = i/2.
         // master[4] = (1 - 0) * tail[0] + 0 * 0 = 0.8.
         // master[5] = (1 - 0.5) * tail[1] + 0.5 * 0 = 0.3.
         assert!((master[4] - 0.8).abs() < 1e-6, "got {}", master[4]);
         assert!((master[5] - 0.3).abs() < 1e-6, "got {}", master[5]);
+    }
+
+    // --- the seam a looping player crosses ---------------------------------
+
+    /// A full-scale sine at `freq_hz`, and nothing else.
+    fn sine(freq_hz: f32) -> AudioPatch {
+        AudioPatch {
+            seed: 0,
+            graph: NodeGraph {
+                nodes: vec![GraphNode {
+                    id: NodeId(0),
+                    kind: NodeKind::Sine(SineOsc {
+                        freq_hz,
+                        ..SineOsc::default()
+                    }),
+                    inputs: BTreeMap::new(),
+                }],
+                output: NodeId(0),
+            },
+        }
+    }
+
+    /// Four beats of 60 BPM at 8 kHz looping from beat 1, with a tone that
+    /// comes in AT the loop start and holds through the end and the tail: a
+    /// silent run-up, then a tone the loop cuts in the middle of.
+    ///
+    /// 220.25 Hz puts the timeline's end, three seconds into the tone, in
+    /// its trough, so a jump from there back to the silence is as large as
+    /// the tone is loud.
+    fn tone_from_the_loop_start(loop_crossfade_beats: f32) -> SequenceRecipe {
+        SequenceRecipe {
+            bpm: 60.0,
+            sample_rate: 8_000,
+            duration_beats: 4.0,
+            loop_start_beats: Some(1.0),
+            loop_crossfade_beats,
+            instruments: vec![Instrument {
+                id: "tone".into(),
+                patch: sine(220.25),
+            }],
+            tracks: vec![Track {
+                events: vec![Event {
+                    time_beats: 1.0,
+                    instrument_id: "tone".into(),
+                    volume: 0.5,
+                    gate_beats: 4.0,
+                    ..Event::default()
+                }],
+            }],
+        }
+    }
+
+    /// THE SEAM RUNS FROM THE LAST SAMPLE TO THE LOOP START, NOT TO SAMPLE 0
+    /// (#4). The crossfade makes `last -> loop_start` continuous. A loop over
+    /// the whole buffer crosses `last -> 0` instead, which nothing smoothed:
+    /// here it jumps from the tone's trough to the silent run-up.
+    ///
+    /// Measured against the largest step the tone itself takes between two
+    /// samples, `2π f / rate` at its level: a continuous seam moves less than
+    /// that, and a click many times more. The hard cut of the same recipe is
+    /// the control that the crossfade is what made the seam continuous.
+    ///
+    /// The numbers, measured on 0.2.1's mixdown, which this passed unchanged:
+    /// a step of 0.0865, a seam of 0.0059, and 0.456 back to sample 0 or
+    /// across the hard cut's seam — the whole of the tone's level, since the
+    /// run-up is silent.
+    #[test]
+    fn the_crossfaded_seam_runs_from_the_last_sample_to_the_loop_start() {
+        let looped = bake_sequence(&tone_from_the_loop_start(0.5));
+        let hard = bake_sequence(&tone_from_the_loop_start(0.0));
+        assert_eq!((looped.len(), hard.len()), (32_000, 32_000));
+        let (last, loop_start) = (31_999, 8_000);
+        let step = 0.5 * std::f32::consts::TAU * 220.25 / 8_000.0;
+
+        let seam = (looped[last] - looped[loop_start]).abs();
+        let whole_buffer = (looped[last] - looped[0]).abs();
+        let hard_seam = (hard[last] - hard[loop_start]).abs();
+        assert!(
+            seam < 0.01 && (whole_buffer - 0.456).abs() < 0.001,
+            "the numbers moved: a seam of {seam}, {whole_buffer} back to sample 0"
+        );
+        assert!(
+            seam < step,
+            "last -> loop start is {seam}, more than the tone's own step {step}"
+        );
+        assert!(
+            whole_buffer > 5.0 * step,
+            "last -> sample 0 is {whole_buffer}: no click against the tone's step {step}"
+        );
+        assert!(
+            hard_seam > 5.0 * step,
+            "the hard cut's last -> loop start is {hard_seam}: the crossfade made no difference"
+        );
+    }
+
+    // --- where the loop starts ---------------------------------------------
+
+    /// One sine held through the recipe and its tail, so the tail the bake
+    /// folds is not silence and the fold can be seen. 219.3 Hz so that no
+    /// stretch these recipes compare is a whole number of cycles, which
+    /// would make the tail and the loop region the same samples.
+    fn sounding(recipe: SequenceRecipe) -> SequenceRecipe {
+        let held = recipe.duration_beats + recipe.loop_crossfade_beats + 1.0;
+        SequenceRecipe {
+            instruments: vec![Instrument {
+                id: "tone".into(),
+                patch: sine(219.3),
+            }],
+            tracks: vec![Track {
+                events: vec![Event {
+                    instrument_id: "tone".into(),
+                    gate_beats: if held.is_finite() { held } else { 1.0 },
+                    volume: 0.5,
+                    ..Event::default()
+                }],
+            }],
+            ..recipe
+        }
+    }
+
+    /// Two seconds at 8 kHz: four beats of 120 BPM with a beat of tail,
+    /// looping from beat 1.
+    fn base() -> SequenceRecipe {
+        SequenceRecipe {
+            bpm: 120.0,
+            sample_rate: 8_000,
+            duration_beats: 4.0,
+            loop_start_beats: Some(1.0),
+            loop_crossfade_beats: 1.0,
+            ..SequenceRecipe::default()
+        }
+    }
+
+    /// Where `bake_sequence` folded its tail into `recipe`'s buffer: the
+    /// first sample at which it differs from the same recipe baked with no
+    /// loop point, which keeps its tail and folds nothing. `None` when the
+    /// bake folded nothing.
+    fn fold(recipe: &SequenceRecipe) -> Option<usize> {
+        let looped = bake_sequence(recipe);
+        let plain = bake_sequence(&SequenceRecipe {
+            loop_start_beats: None,
+            ..recipe.clone()
+        });
+        looped.iter().zip(&plain).position(|(a, b)| a != b)
+    }
+
+    /// [`loop_start_sample`] is where the bake folds its tail, found by
+    /// BAKING rather than by reading the arithmetic a second time: every
+    /// `None` is a recipe whose bake folds nothing, and every `Some` is the
+    /// sample the bake folded into. The cases are bevy_symbios_audio's,
+    /// which held its own copy of this arithmetic to the bake the same way
+    /// while the arithmetic was private here (#4).
+    #[test]
+    fn the_loop_start_is_where_the_bake_folds_its_tail() {
+        let none = [
+            (
+                "no loop point",
+                SequenceRecipe {
+                    loop_start_beats: None,
+                    ..base()
+                },
+            ),
+            (
+                "a loop start at the end",
+                SequenceRecipe {
+                    loop_start_beats: Some(4.0),
+                    ..base()
+                },
+            ),
+            (
+                "a loop start past the end",
+                SequenceRecipe {
+                    loop_start_beats: Some(9.0),
+                    ..base()
+                },
+            ),
+            (
+                "a loop start that rounds onto the end",
+                SequenceRecipe {
+                    loop_start_beats: Some(3.9999),
+                    ..base()
+                },
+            ),
+            (
+                "no length",
+                SequenceRecipe {
+                    duration_beats: 0.0,
+                    loop_start_beats: Some(0.0),
+                    ..base()
+                },
+            ),
+            (
+                "a NaN length",
+                SequenceRecipe {
+                    duration_beats: f32::NAN,
+                    ..base()
+                },
+            ),
+            ("no tempo", SequenceRecipe { bpm: 0.0, ..base() }),
+            (
+                "a NaN tempo",
+                SequenceRecipe {
+                    bpm: f32::NAN,
+                    ..base()
+                },
+            ),
+            (
+                "no sample rate",
+                SequenceRecipe {
+                    sample_rate: 0,
+                    ..base()
+                },
+            ),
+        ];
+        for (what, recipe) in none {
+            let recipe = sounding(recipe);
+            assert_eq!(loop_start_sample(&recipe), None, "{what}");
+            assert_eq!(fold(&recipe), None, "{what}: the bake folded its tail");
+        }
+
+        let some = [
+            ("beat 1", base(), 4_000),
+            (
+                "a start between two samples",
+                SequenceRecipe {
+                    loop_start_beats: Some(2.37),
+                    ..base()
+                },
+                9_480,
+            ),
+            (
+                "the last sample",
+                SequenceRecipe {
+                    loop_start_beats: Some(3.99),
+                    ..base()
+                },
+                15_960,
+            ),
+            (
+                "a negative start",
+                SequenceRecipe {
+                    loop_start_beats: Some(-1.0),
+                    ..base()
+                },
+                0,
+            ),
+            (
+                "a NaN start",
+                SequenceRecipe {
+                    loop_start_beats: Some(f32::NAN),
+                    ..base()
+                },
+                0,
+            ),
+            (
+                "another tempo and rate",
+                SequenceRecipe {
+                    bpm: 97.0,
+                    sample_rate: 11_025,
+                    duration_beats: 3.0,
+                    loop_start_beats: Some(1.3),
+                    loop_crossfade_beats: 0.5,
+                    ..SequenceRecipe::default()
+                },
+                8_865,
+            ),
+        ];
+        for (what, recipe, sample) in some {
+            let recipe = sounding(recipe);
+            assert_eq!(fold(&recipe), Some(sample), "{what}: the bake folded there");
+            assert_eq!(loop_start_sample(&recipe), Some(sample), "{what}");
+        }
+
+        // A hard cut folds nothing, having no tail — and still loops from
+        // where it was set, which is why the crossfade's own early returns
+        // are not the rule.
+        let hard = sounding(SequenceRecipe {
+            loop_crossfade_beats: 0.0,
+            ..base()
+        });
+        assert_eq!(fold(&hard), None, "a hard cut has no tail to fold");
+        assert_eq!(loop_start_sample(&hard), Some(4_000));
     }
 }

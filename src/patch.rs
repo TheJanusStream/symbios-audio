@@ -150,11 +150,16 @@ impl GraphNode {
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum Connection {
     /// A fixed DC value.
-    Constant { value: f32 },
+    Constant {
+        /// What the port reads on every sample.
+        value: f32,
+    },
     /// Reads from another node's output, scaled by `amount` (default
     /// `1.0` if absent in JSON).
     Node {
+        /// The node whose output is read.
         id: NodeId,
+        /// What that output is multiplied by before it reaches the port.
         #[serde(default = "default_amount")]
         amount: f32,
     },

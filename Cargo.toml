@@ -1,6 +1,6 @@
 [package]
 name = "symbios-audio"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 authors = ["Janus"]
 description = "An algorithmic audio generator."
@@ -12,7 +12,11 @@ categories = ["simulation", "game-development", "mathematics"]
 
 [dependencies]
 log = "0.4"
-rand = "0.9"
+# Without its default features: nothing here draws OS entropy. A bake draws
+# from a ChaCha8Rng seeded by the patch, which is what makes it deterministic,
+# and the defaults would force getrandom's wasm backend onto every consumer
+# (Overlands #1172). `std_rng` because a test seeds a `StdRng`.
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng"] }
 rand_chacha = "0.9"
 rayon = "1.11"
 serde = { version = "1.0", features = ["derive", "rc"] }

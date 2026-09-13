@@ -23,8 +23,9 @@
 //!   (Mix/Gain), [`gate`], [`chorus`], [`reverb`] — the built-in node
 //!   implementations.
 //! - [`mod@bake`] — turns one [`AudioPatch`] into `Vec<f32>`.
-//! - [`sequence`] + [`mixdown`] — the timeline-of-events layer and the
-//!   seamless-loop-aware [`bake_sequence`].
+//! - [`sequence`] + [`mixdown`] — the timeline-of-events layer and
+//!   [`bake_sequence`], whose looping buffer loops without a click from its
+//!   last sample back to [`loop_start_sample`].
 //! - [`wav`] — pure RIFF/WAVE encoder for baked buffers (32-bit IEEE float and
 //!   half-size 16-bit PCM).
 //! - [`envelope`] — [`Envelope`] and [`ClampToEnvelope`], the
@@ -70,7 +71,7 @@ pub use filter::{BiquadBandpass, BiquadHighpass, BiquadLowpass, BiquadState};
 pub use gate::Gate;
 pub use lfo::{Lfo, LfoShape};
 pub use mix::{Gain, Mix};
-pub use mixdown::bake_sequence;
+pub use mixdown::{bake_sequence, loop_start_sample};
 pub use node::{BakeContext, Node, NodeKind};
 pub use noise::{BrownNoise, PinkNoise, WhiteNoise};
 pub use oscillator::{

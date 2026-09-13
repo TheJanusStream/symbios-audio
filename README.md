@@ -23,7 +23,10 @@ the `bevy_symbios_audio` wrapper crate, which re-exports this crate wholesale.
   same wiring rule. Connections carry an `amount` multiplier.
 - **A sequencer layer**: a `SequenceRecipe` names instruments (each a whole
   patch), schedules `Event`s in beats, and mixes down to one master buffer —
-  with an optional seamless-loop crossfade baked into the tail. Pitch is
+  with an optional loop point whose crossfade is baked in, so the buffer
+  loops without a click from its last sample back to the loop start
+  (`loop_start_sample`). The beats before the loop start are a one-shot
+  run-up: loop from the loop start, not from the first sample. Pitch is
   continuous, and each event chooses whether to resample (`Varispeed`) or
   retune the oscillators at synthesis time (`TimePreserving`).
 - **A record-boundary envelope**: `clamp_to_envelope` bounds node counts,
@@ -110,8 +113,8 @@ that error to whoever is saving.
 - `oscillator`, `noise`, `adsr`, `filter`, `lfo`, `mix`, `gate`, `chorus`,
   `reverb` — the built-in node implementations.
 - `bake` — one `AudioPatch` into a `Vec<f32>`.
-- `sequence` + `mixdown` — the timeline-of-events layer and the
-  seamless-loop-aware `bake_sequence`.
+- `sequence` + `mixdown` — the timeline-of-events layer, `bake_sequence`,
+  and `loop_start_sample`, the sample a looping buffer goes back to.
 - `envelope` — `Envelope` and `ClampToEnvelope`, the record-boundary clamp.
 - `wav` — RIFF/WAVE encoding for baked buffers.
 - `genetics` — the `impl_genotype!` macro and shared mutation helpers.

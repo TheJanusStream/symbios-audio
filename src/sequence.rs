@@ -10,8 +10,9 @@
 //!
 //! This module is pure schema + [`Genotype`] integration.  The recipe is
 //! turned into a mono `Vec<f32>` master buffer by
-//! [`crate::mixdown::bake_sequence`]; the same function also bakes the
-//! seamless-loop tail crossfade when `loop_start_beats` is set.
+//! [`crate::mixdown::bake_sequence`]; when `loop_start_beats` is set, the
+//! same function also bakes in the tail crossfade that lets the buffer loop
+//! without a click from its last sample back to `loop_start_beats`.
 //!
 //! # Continuous pitch
 //!
@@ -59,11 +60,15 @@ pub struct SequenceRecipe {
     /// release tails that spill past `duration_beats` can be folded
     /// back into the loop start by the crossfade.
     pub duration_beats: f32,
-    /// Beat at which the seamless loop should restart.  `None` means
-    /// "play once, don't loop"; `Some(b)` means "after the timeline
-    /// completes, hop back here and continue".  When set, the mixdown
-    /// baker pre-mixes the tail crossfade into the buffer so a hard
-    /// `Source::loop_..()` is click-free at the seam.
+    /// Beat at which the loop restarts.  `None` means "play once, don't
+    /// loop"; `Some(b)` means "after the timeline completes, hop back here
+    /// and continue".  When set, the mixdown baker pre-mixes the tail
+    /// crossfade into the buffer at beat `b`, so the seam from the buffer's
+    /// last sample back to beat `b` is click-free, and the beats before `b`
+    /// are a one-shot run-up that a looping player skips.  A player that
+    /// loops the whole buffer from its first sample crosses a seam nothing
+    /// smoothed unless `b` is `0.0`: see
+    /// [`crate::mixdown::loop_start_sample`].
     pub loop_start_beats: Option<f32>,
     /// Tail crossfade window in beats — how much of the end of the
     /// timeline overlaps with the start of the loop region when
@@ -114,6 +119,7 @@ pub struct Instrument {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Track {
+    /// The notes on this track, each placed at its own `time_beats`.
     pub events: Vec<Event>,
 }
 
